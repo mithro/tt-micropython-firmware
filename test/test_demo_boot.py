@@ -97,7 +97,8 @@ class FakeShuttle:
             name = n
 
             def enable(self, force=False):
-                shuttle.enabled = n
+                # like the real muxes, record the design object itself
+                shuttle.enabled = self
                 return True
         return D()
 
@@ -126,7 +127,7 @@ def test_autostart_held_starts(tmp_path):
     tt = FakeTT()
     run = demo.autostart(tt, True, write(tmp_path, PLAYLIST))
     assert run.running
-    assert tt.shuttle.enabled == 'a'
+    assert tt.shuttle.enabled.name == 'a'
     run.stop()
 
 

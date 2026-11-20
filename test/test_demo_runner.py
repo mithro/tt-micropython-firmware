@@ -207,6 +207,32 @@ def test_skips_failing_projects():
     assert shuttle.enabled.name == 'c'
 
 
+def test_enable_returning_none_but_enabled_counts_as_success():
+    # FPGA BitStream.enable() returns None even when the bitstream loaded
+    tt, shuttle, run = make([{'macro': 'a'}, {'macro': 'b'}])
+    for d in shuttle.designs.values():
+        orig = d.enable
+        d.enable = (lambda o: (lambda force=False: (o(force), None)[1]))(orig)
+    assert run.start()
+    assert shuttle.enabled.name == 'a'
+    run._timer.fire()
+    assert shuttle.enabled.name == 'b'
+    assert run.running
+
+
+def test_enable_returning_none_and_nothing_enabled_is_failure():
+    # e.g. ProjectMux.enable() on a GROUP: disables, returns None
+    tt, shuttle, run = make([{'macro': 'a'}, {'macro': 'b'}])
+
+    def group_enable(force=False):
+        shuttle.enable_calls.append('a')
+        shuttle.enabled = None
+        return None
+    shuttle.get('a').enable = group_enable
+    assert run.start()
+    assert shuttle.enabled.name == 'b'
+
+
 def test_all_failing_stops_without_looping():
     tt, shuttle, run = make([{'macro': 'a'}, {'macro': 'b'}], failing=['a', 'b'])
     assert not run.start()

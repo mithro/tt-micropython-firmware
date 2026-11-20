@@ -348,10 +348,16 @@ class DemoRunner:
         self.switching = True
         try:
             design = self._shuttle.get(_entry_key(entry))
-            if not design.enable():
-                return False
+            result = design.enable()
         finally:
             self.switching = False
+        # enable()'s return value isn't reliable on its own: FPGA
+        # bitstreams return None even when loaded, and ProjectMux returns
+        # None for a group it refused.  False is always a refusal (e.g.
+        # danger level); otherwise trust what the mux says is enabled.
+        enabled = self._shuttle.enabled
+        if result is False or enabled is None or enabled.name != design.name:
+            return False
 
         tt = self._tt
         if 'clock_hz' in entry:
