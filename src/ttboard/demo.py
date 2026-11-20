@@ -167,10 +167,11 @@ def validate(conf, shuttle_run: str, shuttle=None):
     for f in conf:
         if f not in _TopFields:
             errors.append(f'unknown field "{f}"')
-    for f in _TopFields:
-        if f not in conf:
-            errors.append(f'missing "{f}"')
-    if len(errors):
+    missing = [f for f in _TopFields if f not in conf]
+    for f in missing:
+        errors.append(f'missing "{f}"')
+    if len(missing):
+        # nothing more can be checked without them
         return ([], errors)
     if conf['version'] != Version or not _is_int(conf['version']):
         errors.append(f'"version" must be {Version}, got {conf["version"]}')
