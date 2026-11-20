@@ -175,6 +175,74 @@ def select_playlist(conf, shuttle_run: str):
     return (entries, seconds)
 
 
+def boot_button_held(reset_pin=None, led_pin=None, sleep_ms=None,
+                     release_timeout_ms: int = 10000) -> bool:
+    '''
+        Was the project reset button held as the board powered up?
+
+        Call this at the very start of main.py, before the demoboard is
+        probed.  The reset line has an on-board pull-up, so it reads low
+        only while the button is pressed.  If it is held we blink the LED
+        until it is released, because the chip ROM read that follows needs
+        to drive that line itself.  A line that stays low for longer than
+        release_timeout_ms is treated as not pressed.
+
+        The pins and sleep function may be passed in for testing.
+    '''
+    if sleep_ms is None:
+        import ttboard.util.time as time
+        sleep_ms = time.sleep_ms
+    if reset_pin is None or led_pin is None:
+        from ttboard.pins.upython import Pin
+        from ttboard.pins.gpio_map_dbv3 import GPIOMapTTDBv3
+        if reset_pin is None:
+            reset_pin = Pin(GPIOMapTTDBv3.PROJECT_nRST, Pin.IN)
+        if led_pin is None:
+            led_pin = Pin(GPIOMapTTDBv3.RP_LED, Pin.OUT)
+
+    # debounce: must read low for the whole sampling window
+    for _i in range(5):
+        if reset_pin():
+            return False
+        sleep_ms(10)
+
+    log.info('Demo: reset button held at boot, waiting for release')
+    waited = 0
+    led = 1
+    while not reset_pin():
+        if waited >= release_timeout_ms:
+            log.warn('Demo: reset line stayed low, ignoring it')
+            led_pin(0)
+            return False
+        led_pin(led)
+        led = 1 - led
+        sleep_ms(100)
+        waited += 100
+    led_pin(0)
+    # let the button settle before the ROM read drives the line
+    sleep_ms(50)
+    return True
+
+
+def autostart(tt, button_held: bool, path: str = ConfigPath):
+    '''
+        Build the DemoRunner for this board (always returned, so it is
+        available as tt.demo) and start it if the config's "enabled"
+        flag and the boot button say so: the button inverts "enabled".
+    '''
+    conf = load_config(path)
+    entries, seconds = select_playlist(conf, tt.shuttle.run)
+    runner = DemoRunner(tt, entries, seconds)
+    if config_enabled(conf) != bool(button_held):
+        if not len(runner.playlist):
+            log.warn(f'Demo: requested but {path} has no playlist for "{tt.shuttle.run}"')
+        else:
+            runner.start()
+    elif button_held:
+        log.info('Demo: reset button held, skipping the demo for this boot')
+    return runner
+
+
 def _entry_key(entry: dict):
     return entry['macro'] if 'macro' in entry else entry['address']
 
