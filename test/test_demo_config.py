@@ -101,6 +101,19 @@ def test_bad_steps(steps, expected):
     assert any(expected in e for e in errors), errors
 
 
+def test_unknown_top_level_field_does_not_hide_other_errors():
+    seq = copy.deepcopy(SEQ)
+    seq['enabled'] = True
+    seq['shuttle'] = 'tt09'
+    seq['projects'].append(dict(ENTRY, ui_in=300))
+    _, errors = demo.validate(seq, 'ttsky25a')
+    assert errors == [
+        'unknown field "enabled"',
+        '"shuttle" is "tt09" but this chip is "ttsky25a"',
+        'project 1: "ui_in" must be an integer 0..255, got 300',
+    ]
+
+
 def test_all_errors_reported():
     seq = copy.deepcopy(SEQ)
     seq['shuttle'] = 'tt09'
