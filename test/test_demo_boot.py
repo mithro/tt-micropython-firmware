@@ -82,15 +82,14 @@ def test_stuck_low_times_out():
 class FakeShuttle:
     run = 'tt09'
 
-    def __init__(self, names):
-        self.names = names
+    def __init__(self, keys):
+        self.keys = keys
         self.design_enabled_callback = None
         self.enabled = None
 
-    def has(self, n):
-        return n in self.names
-
     def get(self, n):
+        if n not in self.keys:
+            raise AttributeError(n)
         shuttle = self
 
         class D:
@@ -105,7 +104,7 @@ class FakeShuttle:
 
 class FakeTT:
     def __init__(self):
-        self.shuttle = FakeShuttle(['a', 'b'])
+        self.shuttle = FakeShuttle([1, 2])
 
 
 def write(tmp_path, conf):
@@ -114,7 +113,8 @@ def write(tmp_path, conf):
     return str(p)
 
 
-PLAYLIST = {'shuttles': {'tt09': {'projects': ['a', 'b']}}}
+PLAYLIST = {'shuttles': {'tt09': {'projects': [{'address': 1, 'subtile': 0},
+                                               {'address': 2, 'subtile': 0}]}}}
 
 
 def test_autostart_not_enabled_not_held(tmp_path):
@@ -127,7 +127,7 @@ def test_autostart_held_starts(tmp_path):
     tt = FakeTT()
     run = demo.autostart(tt, True, write(tmp_path, PLAYLIST))
     assert run.running
-    assert tt.shuttle.enabled.name == 'a'
+    assert tt.shuttle.enabled.name == 1
     run.stop()
 
 
