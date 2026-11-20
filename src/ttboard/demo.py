@@ -224,18 +224,42 @@ def boot_button_held(reset_pin=None, led_pin=None, sleep_ms=None,
     return True
 
 
-def autostart(tt, button_held: bool, path: str = ConfigPath):
+def shuttle_playlist_path(shuttle_run: str) -> str:
+    '''
+        The shuttle's curated playlist, built into the firmware from the
+        shuttle index's "demo" field (see bin/extract_demo_playlist.py).
+    '''
+    return f'/shuttles/{shuttle_run}.demo.json'
+
+
+def autostart(tt, button_held: bool, path: str = ConfigPath, fallback_path: str = None):
     '''
         Build the DemoRunner for this board (always returned, so it is
         available as tt.demo) and start it if the config's "enabled"
         flag and the boot button say so: the button inverts "enabled".
+
+        The playlist comes from /demo.json; if that has nothing for this
+        shuttle (no section for it and no "*" section), the shuttle's
+        curated playlist is used instead.
     '''
+    run = tt.shuttle.run
     conf = load_config(path)
-    entries, seconds = select_playlist(conf, tt.shuttle.run)
+    entries, seconds = select_playlist(conf, run)
+    source = path
+    if not len(entries):
+        if fallback_path is None:
+            fallback_path = shuttle_playlist_path(run)
+        entries, fb_seconds = select_playlist(load_config(fallback_path), run)
+        if len(entries):
+            source = fallback_path
+            # the board's own default time per project still applies
+            if not (isinstance(conf, dict) and _is_number(conf.get('seconds')) and conf['seconds'] > 0):
+                seconds = fb_seconds
+            log.info(f'Demo: using the shuttle playlist {fallback_path}')
     runner = DemoRunner(tt, entries, seconds)
     if config_enabled(conf) != bool(button_held):
         if not len(runner.playlist):
-            log.warn(f'Demo: requested but {path} has no playlist for "{tt.shuttle.run}"')
+            log.warn(f'Demo: requested but there is no playlist for "{run}" ({source})')
         else:
             runner.start()
     elif button_held:
