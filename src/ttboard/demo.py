@@ -42,7 +42,13 @@ releases that don't ship it.
 @author: Tim 'mithro' Ansell
 '''
 import json
-from ttboard.pins.upython import Timer
+# ttboard.pins.upython only exports Timer from SDK 3.0.8 on; boards in the
+# field still run 3.0.7, so pick it the same way upython picks Pin.
+from ttboard.util.platform import IsRP2
+if IsRP2:
+    from machine import Timer
+else:
+    from ttboard.pins.desktop_pin import Timer
 import ttboard.log as logging
 log = logging.getLogger(__name__)
 

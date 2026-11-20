@@ -28,6 +28,13 @@ def test_no_relative_imports():
     assert 'ttboard.demo' not in text
 
 
+def test_no_timer_from_upython():
+    # SDK 3.0.7 (still on tt09 / ttgf0p2 boards) has no Timer in
+    # ttboard.pins.upython: "ImportError: can't import name Timer" on hardware.
+    text = SRC.read_text()
+    assert not re.search(r'from\s+ttboard\.pins\.upython\s+import\s+.*\bTimer\b', text)
+
+
 def test_works_as_toplevel_module(tmp_path):
     demo = load_as_toplevel()
     assert demo.__name__ == 'demo'
