@@ -9,7 +9,7 @@ There are two ways:
  * **Hold the project reset (RST) button while plugging in power.**  The LED blinks while the button is held; let go and the demo starts once the board has booted.
  * **Kiosk mode:** set `"enabled": true` in `/demo.json` and the demo starts on every boot.  On a kiosk board, holding RST while powering up *skips* the demo for that boot.
 
-Either way the playlist comes from `/demo.json`; with no playlist for the detected chip, nothing happens.
+Either way the playlist comes from `/demo.json`.  If that file is missing, or has neither an entry for the detected chip nor a `*` entry, the chip's built-in playlist is used: the designs the Tiny Tapeout shuttle index marks for demos (from each shuttle repo's `projects/demo.yaml`), bundled into the firmware as `/shuttles/<shuttle>.demo.json`.  With neither, nothing happens.
 
 From the REPL, the demo is available as `tt.demo`:
 
