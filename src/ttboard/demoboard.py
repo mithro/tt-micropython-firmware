@@ -17,6 +17,7 @@ from ttboard.globals import Globals
 from ttboard.mode import RPMode
 from ttboard.pins.pins import Pins
 from ttboard.project_mux import Design
+from ttboard.project_rotation import ProjectRotation
 from ttboard.config.user_config import UserConfig
 import ttboard.util.platform as platform 
 from ttboard.boot.demoboard_detect import DemoboardDetect, DemoboardVersion, DemoboardCarrier
@@ -172,7 +173,9 @@ class DemoBoard:
         self._clock_pio = None 
         
         self._project_previously_loaded = {}
-        self.load_default_project() 
+        # set when config.ini lists several default projects
+        self.project_rotation = None
+        self.load_default_project()
         
         
             
@@ -183,14 +186,36 @@ class DemoBoard:
         
         
     def load_default_project(self):
-        if self.user_config.default_project is not None:
-            if self.shuttle.has(self.user_config.default_project):
-                self.shuttle.get(self.user_config.default_project).enable()
-            else:
-                log.warn(f'Default project is unknown "{self.user_config.default_project}"')
-        else:
+        '''
+            Enable the project set in config.ini [DEFAULT] 'project'.
+            If several are listed, enable the first one available on
+            this shuttle and rotate through the rest every
+            'switch_interval' seconds (see project_rotation).
+        '''
+        names = self.user_config.default_projects
+        if not len(names):
             log.info(f'No default project--disabling')
             self.shuttle.disable()
+            return
+
+        available = []
+        for name in names:
+            if self.shuttle.has(name):
+                available.append(name)
+            else:
+                log.warn(f'Default project is unknown "{name}"')
+
+        if not len(available):
+            return
+
+        self.shuttle.get(available[0]).enable()
+
+        if len(available) > 1:
+            interval = self.user_config.switch_interval
+            if interval is None:
+                interval = ProjectRotation.DefaultIntervalSeconds
+            self.project_rotation = ProjectRotation(self.shuttle, available, interval)
+            self.project_rotation.start()
                 
     @property 
     def version(self) -> str:
@@ -512,7 +537,14 @@ class DemoBoard:
             
         '''
         log.debug(f'Design "{design.name}" loaded, apply user conf')
-        
+
+        rotation = self.project_rotation
+        if rotation is not None and rotation.running and not rotation.switching:
+            # someone picked a project by hand: stop cycling through the
+            # config.ini project list so we don't switch away from it
+            log.info(f'Design "{design.name}" enabled manually, stopping project rotation')
+            rotation.stop()
+
         applyWhenInModeMap = {
             RPMode.ASIC_RP_CONTROL: True,
             RPMode.ASIC_MANUAL_INPUTS: True
