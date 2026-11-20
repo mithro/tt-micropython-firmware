@@ -6,8 +6,8 @@ if any project carries "demo" settings, writes SHUTTLE.demo.json next to
 it in the /demo.json format, so ttboard.demo can use it when the board's
 own /demo.json has no playlist for that shuttle.
 
-Entries use addresses ("ADDR-SUBTILE") rather than macro names, as the
-firmware renames some projects (e.g. Wokwi ones) on the board.
+Entries are identified by address and subtile, as everywhere in
+/demo.json; the board validates them like any other playlist.
 
 usage: extract_demo_playlist.py SHUTTLE.json [SHUTTLE.json ...]
 
@@ -17,7 +17,8 @@ import json
 import os
 import sys
 
-DEMO_KEYS = ['seconds', 'clock_hz', 'ui_in', 'uio_oe_pico', 'uio_in']
+# the index's "demo" settings use the /demo.json entry names
+DEMO_KEYS = ['duration_ms', 'clock_hz', 'ui_in', 'uio_oe_pico', 'uio_in', 'keys']
 
 
 def playlist_from_index(index: dict):
@@ -27,7 +28,7 @@ def playlist_from_index(index: dict):
         settings = p.get('demo')
         if not isinstance(settings, dict):
             continue
-        entry = {'address': f"{int(p['address'])}-{int(p.get('subtile_addr', 0))}"}
+        entry = {'address': int(p['address']), 'subtile': int(p.get('subtile_addr', 0))}
         for k in DEMO_KEYS:
             if k in settings:
                 entry[k] = settings[k]
