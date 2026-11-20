@@ -1,64 +1,38 @@
 '''
 Created on Nov 20, 2026
 
-Demo mode: cycle through a playlist of projects -- e.g. VGA designs on a
-screen at a booth -- with no computer attached, optionally playing a
-fixed sequence of inputs to each (e.g. to make a game play itself).
+Demo mode: cycle through a fixed sequence of projects -- e.g. VGA designs
+on a screen at a booth -- with no computer attached, optionally playing a
+fixed script of inputs to each (e.g. to make a game play itself).
 
-The playlist lives in /demo.json, keyed by shuttle.  There is exactly
-one way to write each thing:
+Turning it on: "demo = yes" in config.ini's [DEFAULT] section.  Holding
+the project reset button while the board powers up flips that setting
+for one boot (see boot_button_held() and main.py).
 
-    {
-      "version": 1,
-      "enabled": false,           # true: run the demo on every boot
-      "duration_ms": 15000,       # default time per project
-      "shuttles": {
-        "ttsky25a": {"projects": [ENTRY, ...]},
-        "*":        {"projects": [ENTRY, ...]}    # any other shuttle
-      }
-    }
+The sequence: /demo.json if it exists, otherwise the one bundled with
+the firmware for the detected chip, /shuttles/<shuttle>.demo.json.  Both
+have exactly the same format, and every field is required:
 
-ENTRY (projects are identified by their shuttle index address only):
+    {"version": 1,
+     "shuttle": "ttsky25a",            # must match the chip ROM
+     "projects": [
+       {"address": 260,                # the shuttle index address
+        "subtile": 0,                  # the shuttle index subtile_addr
+        "duration_ms": 15000,          # how long to show it
+        "clock_hz": 25000000,          # project clock (0: no clock)
+        "ui_in": 7,                    # input value set after enabling
+        "steps": [{"set": 6}, {"wait_ms": 40}, {"set": 7}, {"wait_ms": 250}]}]}
 
-    {"address": 907,              # required: the index "address"
-     "subtile": 0,                # required: the index "subtile_addr" (0 if none)
-     "duration_ms": 15000,        # optional, overrides the default
-     "clock_hz": 25175000,        # optional, overrides the index clock_hz
-     "ui_in": 0,                  # optional base input value (0-255)
-     "uio_oe_pico": 0,            # optional (0-255)
-     "uio_in": 0,                 # optional (0-255)
-     "keys": KEYS}                # optional
+"steps" is played in order: {"set": N} writes ui_in, {"wait_ms": N}
+waits.  When the steps run out the project is reset and they start over
+from the first step (ui_in is not re-applied: start with a "set" if it
+matters).  An empty "steps" list plays nothing and never resets.
 
-KEYS, played in order and looped while the project is shown:
-
-    {"via": "ui",                 # "ui": "set" writes ui_in
-                                  # "gamepad": "set" is a 12-bit Gamepad
-                                  #   Pmod report, sent on ui[4..6]
-     "steps": [{"set": 5}, {"wait_ms": 40}, {"set": 7}, {"wait_ms": 120}]}
-
-Each step has exactly one key: "set" (an absolute value, applied at
-once) or "wait_ms".  When the steps run out the project is reset, the
-entry's ui_in is applied again and the steps start over, so every loop
-plays out from the same state.  Entries without keys are never reset
-while shown.  Gamepad report bits: b0 y1 select2 start3 up4 down5 left6
-right7 a8 x9 l10 r11.
-
-Each project's own config.ini section is applied when it is enabled, as
-usual; the values here are applied on top of it.  Projects not on the
-detected shuttle, or that refuse to enable (danger level), are skipped.
-Invalid entries are skipped, invalid keys are dropped (the project is
-still shown), and unknown fields are ignored -- all with a log message.
-
-If /demo.json has no playlist for the detected shuttle (no section for
-it and no "*" section), the shuttle's built-in playlist is used: see
-shuttle_playlist_path().
-
-Demo mode starts at boot if "enabled" is true, or if the project reset
-button is held while the board powers up (holding it inverts "enabled",
-so it can also be used to skip the demo for one boot).  See main.py.
+An invalid sequence is never shown partly: every problem is logged, and
+the board shows an error pattern instead (see ErrorDisplay).
 
 From the REPL:
-    tt.demo.start() / tt.demo.stop() / tt.demo.next()
+    tt.demo.start() / tt.demo.stop() / tt.demo.next() / tt.demo.errors
 
 Enabling any project by hand (REPL or the commander app) stops the demo.
 
@@ -72,169 +46,43 @@ from ttboard.pins.upython import Timer
 import ttboard.log as logging
 log = logging.getLogger(__name__)
 
-ConfigPath = '/demo.json'
-DefaultDurationMs = 15000
-Wildcard = '*'
+UserPath = '/demo.json'
+IniPath = 'config.ini'
+IniOption = 'demo'
+Version = 1
 
-_EntryByteOpts = ['ui_in', 'uio_oe_pico', 'uio_in']
-_Vias = {'ui': 0xff, 'gamepad': 0xfff}   # via -> largest "set" value
+_TopFields = ('version', 'shuttle', 'projects')
+_EntryFields = ('address', 'subtile', 'duration_ms', 'clock_hz', 'ui_in', 'steps')
 
-# Gamepad Pmod wiring on ui_in, as on the Pmod and the VGA playground
-GamepadLatchBit = 0x10   # ui[4]
-GamepadClockBit = 0x20   # ui[5]
-GamepadDataBit = 0x40    # ui[6]
-GamepadPins = GamepadLatchBit | GamepadClockBit | GamepadDataBit
+
+def shuttle_sequence_path(shuttle_run: str) -> str:
+    '''The sequence bundled with the firmware for a chip.'''
+    return f'/shuttles/{shuttle_run}.demo.json'
 
 
 def _is_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
-def load_config(path: str = ConfigPath):
-    '''
-        Read a demo configuration, or None if it is missing or invalid.
-    '''
+def _exists(path: str) -> bool:
     try:
-        with open(path) as fh:
-            conf = json.load(fh)
+        with open(path):
+            return True
     except OSError:
-        log.debug(f'No demo config at {path}')
-        return None
-    except ValueError as e:
-        log.error(f'Demo config {path} is not valid JSON: {e}')
-        return None
-    if not isinstance(conf, dict):
-        log.error(f'Demo config {path} must be a JSON object')
-        return None
-    return conf
+        return False
 
 
-def config_enabled(conf) -> bool:
-    return isinstance(conf, dict) and conf.get('enabled') is True
-
-
-def parse_keys(raw):
+def demo_setting(ini_path: str = IniPath) -> bool:
     '''
-        Validate a "keys" object; returns it, or None (with a warning)
-        if it can't be played.
+        Is "demo = yes" set in config.ini's [DEFAULT] section?
     '''
-    if not isinstance(raw, dict):
-        log.warn(f'Demo: keys must be an object: {raw}')
-        return None
-    via = raw.get('via')
-    if via not in _Vias:
-        log.warn(f'Demo: keys "via" must be "ui" or "gamepad", got {via}')
-        return None
-    steps = raw.get('steps')
-    if not isinstance(steps, list) or not len(steps):
-        log.warn('Demo: keys need a non-empty "steps" list')
-        return None
-    max_set = _Vias[via]
-    total_ms = 0
-    parsed = []
-    for step in steps:
-        if not isinstance(step, dict) or len(step) != 1:
-            log.warn(f'Demo: keys step must be an object with exactly one key: {step}')
-            return None
-        if 'set' in step:
-            v = step['set']
-            if not (_is_int(v) and 0 <= v <= max_set):
-                log.warn(f'Demo: keys "set" must be an integer 0..{max_set}: {step}')
-                return None
-            parsed.append(('set', v))
-        elif 'wait_ms' in step:
-            v = step['wait_ms']
-            if not (_is_int(v) and v >= 0):
-                log.warn(f'Demo: keys "wait_ms" must be an integer >= 0: {step}')
-                return None
-            parsed.append(('wait_ms', v))
-            total_ms += v
-        else:
-            log.warn(f'Demo: unknown keys step {step}')
-            return None
-    if total_ms <= 0:
-        # a loop that never waits would never give control back
-        log.warn('Demo: keys steps must wait for some time')
-        return None
-    return {'via': via, 'steps': parsed}
-
-
-def parse_entry(raw):
-    '''
-        Validate one playlist entry.  Returns a dict with 'address',
-        'subtile' and any valid options, or None if it can't be used.
-    '''
-    if not isinstance(raw, dict):
-        log.warn(f'Demo: ignoring playlist entry {raw}: must be an object')
-        return None
-    address = raw.get('address')
-    subtile = raw.get('subtile')
-    if not (_is_int(address) and address >= 0 and _is_int(subtile) and subtile >= 0):
-        log.warn(f'Demo: playlist entry needs integer "address" and "subtile": {raw}')
-        return None
-    entry = {'address': address, 'subtile': subtile}
-
-    for opt in ['duration_ms', 'clock_hz']:
-        v = raw.get(opt)
-        if v is None:
-            continue
-        if _is_int(v) and v > 0:
-            entry[opt] = v
-        else:
-            log.warn(f'Demo: ignoring bad {opt} {v} in {raw}')
-
-    for opt in _EntryByteOpts:
-        v = raw.get(opt)
-        if v is None:
-            continue
-        if _is_int(v) and 0 <= v <= 0xff:
-            entry[opt] = v
-        else:
-            log.warn(f'Demo: ignoring bad {opt} {v} in {raw}')
-
-    if raw.get('keys') is not None:
-        keys = parse_keys(raw['keys'])
-        if keys is not None:
-            entry['keys'] = keys
-        else:
-            log.warn(f'Demo: dropping keys of {entry_key(entry)}, still showing it')
-    return entry
-
-
-def select_playlist(conf, shuttle_run: str):
-    '''
-        Pick the playlist for this shuttle (falling back to the "*"
-        section) and the default time per project.
-        Returns (entries, duration_ms).
-    '''
-    duration_ms = DefaultDurationMs
-    if not isinstance(conf, dict):
-        return ([], duration_ms)
-    d = conf.get('duration_ms')
-    if d is not None:
-        if _is_int(d) and d > 0:
-            duration_ms = d
-        else:
-            log.warn(f'Demo: ignoring bad duration_ms {d}')
-
-    shuttles = conf.get('shuttles')
-    if not isinstance(shuttles, dict):
-        return ([], duration_ms)
-    section = shuttles.get(shuttle_run)
-    if section is None:
-        section = shuttles.get(Wildcard)
-    if not isinstance(section, dict):
-        return ([], duration_ms)
-    raw_list = section.get('projects')
-    if not isinstance(raw_list, list):
-        return ([], duration_ms)
-
-    entries = []
-    for raw in raw_list:
-        e = parse_entry(raw)
-        if e is not None:
-            entries.append(e)
-    return (entries, duration_ms)
+    from ttboard.config.parser import ConfigParser
+    conf = ConfigParser()
+    try:
+        conf.read(ini_path)
+    except OSError:
+        return False
+    return conf.get('DEFAULT', IniOption) is True
 
 
 def entry_key(entry: dict):
@@ -246,6 +94,127 @@ def entry_key(entry: dict):
     if entry['subtile']:
         return f"{entry['address']}-{entry['subtile']}"
     return entry['address']
+
+
+def _check_steps(where: str, steps, errors: list):
+    if not isinstance(steps, list):
+        errors.append(f'{where}: "steps" must be a list')
+        return
+    total_wait = 0
+    for i, step in enumerate(steps):
+        here = f'{where} step {i}'
+        if not isinstance(step, dict) or len(step) != 1:
+            errors.append(f'{here}: must be an object with exactly one key: {step}')
+            continue
+        if 'set' in step:
+            v = step['set']
+            if not (_is_int(v) and 0 <= v <= 0xff):
+                errors.append(f'{here}: "set" must be an integer 0..255, got {v}')
+        elif 'wait_ms' in step:
+            v = step['wait_ms']
+            if not (_is_int(v) and v >= 0):
+                errors.append(f'{here}: "wait_ms" must be an integer >= 0, got {v}')
+            else:
+                total_wait += v
+        else:
+            errors.append(f'{here}: unknown step {step}')
+    if len(steps) and total_wait <= 0:
+        # a loop that never waits would never give control back
+        errors.append(f'{where}: "steps" must wait for some time in total')
+
+
+def _check_entry(where: str, e, errors: list):
+    if not isinstance(e, dict):
+        errors.append(f'{where}: must be an object')
+        return False
+    ok = True
+    for f in e:
+        if f not in _EntryFields:
+            errors.append(f'{where}: unknown field "{f}"')
+            ok = False
+    for f in _EntryFields:
+        if f not in e:
+            errors.append(f'{where}: missing "{f}"')
+            ok = False
+    if not ok:
+        return False
+    checks = [
+        ('address', _is_int(e['address']) and e['address'] >= 0, 'an integer >= 0'),
+        ('subtile', _is_int(e['subtile']) and e['subtile'] >= 0, 'an integer >= 0'),
+        ('duration_ms', _is_int(e['duration_ms']) and e['duration_ms'] > 0, 'an integer > 0'),
+        ('clock_hz', _is_int(e['clock_hz']) and e['clock_hz'] >= 0, 'an integer >= 0'),
+        ('ui_in', _is_int(e['ui_in']) and 0 <= e['ui_in'] <= 0xff, 'an integer 0..255'),
+    ]
+    for field, good, what in checks:
+        if not good:
+            errors.append(f'{where}: "{field}" must be {what}, got {e[field]}')
+            ok = False
+    n = len(errors)
+    _check_steps(where, e['steps'], errors)
+    return ok and len(errors) == n
+
+
+def validate(conf, shuttle_run: str, shuttle=None):
+    '''
+        Check a parsed sequence against the format and, if a shuttle (the
+        project mux) is given, against the projects actually on the chip.
+        Returns (entries, errors): entries is only meaningful when errors
+        is empty.
+    '''
+    errors = []
+    if not isinstance(conf, dict):
+        return ([], ['must be a JSON object'])
+    for f in conf:
+        if f not in _TopFields:
+            errors.append(f'unknown field "{f}"')
+    for f in _TopFields:
+        if f not in conf:
+            errors.append(f'missing "{f}"')
+    if len(errors):
+        return ([], errors)
+    if conf['version'] != Version or not _is_int(conf['version']):
+        errors.append(f'"version" must be {Version}, got {conf["version"]}')
+    if conf['shuttle'] != shuttle_run:
+        errors.append(f'"shuttle" is "{conf["shuttle"]}" but this chip is "{shuttle_run}"')
+    projects = conf['projects']
+    if not isinstance(projects, list) or not len(projects):
+        errors.append('"projects" must be a non-empty list')
+        return ([], errors)
+
+    entries = []
+    for i, e in enumerate(projects):
+        where = f'project {i}'
+        if not _check_entry(where, e, errors):
+            continue
+        entries.append(e)
+        if shuttle is None:
+            continue
+        key = entry_key(e)
+        try:
+            design = shuttle.get(key)
+        except Exception:
+            design = None
+        if design is None:
+            errors.append(f'{where}: no project at address {key} on {shuttle_run}')
+            continue
+        if getattr(design, 'danger_level', 0):
+            errors.append(f'{where}: project {key} ({design.name}) is not marked safe '
+                          'and would not be enabled')
+    return (entries, errors)
+
+
+def load(path: str, shuttle_run: str, shuttle=None):
+    '''
+        Read and validate a sequence file.  Returns (entries, errors).
+    '''
+    try:
+        with open(path) as fh:
+            conf = json.load(fh)
+    except OSError:
+        return ([], [f'cannot read {path}'])
+    except ValueError as e:
+        return ([], [f'not valid JSON: {e}'])
+    return validate(conf, shuttle_run, shuttle)
 
 
 def boot_button_held(reset_pin=None, led_pin=None, sleep_ms=None,
@@ -297,38 +266,132 @@ def boot_button_held(reset_pin=None, led_pin=None, sleep_ms=None,
     return True
 
 
-def autostart(tt, button_held: bool, path: str = ConfigPath):
+def autostart(tt, button_held: bool, ini_path: str = IniPath,
+              user_path: str = UserPath, shuttle_path: str = None,
+              error_display=None):
     '''
-        Build the DemoRunner for this board (always returned, so it is
-        available as tt.demo) and start it if the config's "enabled"
-        flag and the boot button say so: the button inverts "enabled".
+        Build tt.demo and start it if config.ini's "demo" setting, flipped
+        by the boot button, says so.  The sequence is user_path if it
+        exists, otherwise the chip's bundled one.  If that is missing or
+        invalid, every problem is logged and the error display is shown
+        instead.  Always returns the DemoRunner.
     '''
-    conf = load_config(path)
-    entries, duration_ms = select_playlist(conf, tt.shuttle.run)
-    runner = DemoRunner(tt, entries, duration_ms)
-    if config_enabled(conf) != bool(button_held):
-        if not len(runner.playlist):
-            log.warn(f'Demo: requested but {path} has no playlist for "{tt.shuttle.run}"')
-        else:
-            runner.start()
-    elif button_held:
-        log.info('Demo: reset button held, skipping the demo for this boot')
+    run = tt.shuttle.run
+    if shuttle_path is None:
+        shuttle_path = shuttle_sequence_path(run)
+    path = user_path if _exists(user_path) else shuttle_path
+    on = demo_setting(ini_path) != bool(button_held)
+
+    runner = DemoRunner(tt, [], path=path, error_display=error_display)
+    if not on:
+        if button_held:
+            log.info('Demo: reset button held, skipping the demo for this boot')
+        return runner
+    if not _exists(path):
+        runner.fail([f'no demo sequence: neither {user_path} nor {shuttle_path} exists'])
+        return runner
+    entries, errors = load(path, run, tt.shuttle)
+    if len(errors):
+        runner.fail(errors)
+        return runner
+    runner.playlist = entries
+    runner.start()
     return runner
 
 
-class KeyPlayer:
+class ErrorDisplay:
     '''
-        Plays an entry's "keys" steps, looping: "set" steps are applied
-        at once, "wait_ms" steps arm a one-shot timer.
+        Makes a demo error visible on a board nobody is watching the logs
+        of: blinks "E" on the 7-segment display and the RP's LED.
+
+        The display is driven by the chip, so we use the factory test
+        design, which mirrors ui_in to uo_out while held in reset.  If that
+        can't be set up, the LED still blinks.  Enabling any project by
+        hand stops the display, leaving that project's inputs alone.
+    '''
+    Pattern = 0x79          # "E": segments a, d, e, f, g
+    PeriodMs = 250
+
+    def __init__(self, tt, timer_class=Timer, led_pin=None):
+        self._tt = tt
+        self._timer_class = timer_class
+        self._led = led_pin
+        self._timer = None
+        self._segments = False
+        self._on = False
+        self._orig_callback = None
+        self._hooked = False
+
+    def start(self):
+        tt = self._tt
+        try:
+            from ttboard.mode import RPMode
+            tt.shuttle.tt_um_factory_test.enable()
+            tt.mode = RPMode.ASIC_RP_CONTROL
+            tt.clock_project_stop()
+            tt.reset_project(True)
+            self._segments = True
+        except Exception as e:
+            log.error(f'Demo: no 7-segment error display ({e}), using the LED only')
+        # installed after enabling the factory test, so only later
+        # (manual) enables trigger it
+        self._orig_callback = tt.shuttle.design_enabled_callback
+        tt.shuttle.design_enabled_callback = self._design_enabled
+        self._hooked = True
+        if self._led is None:
+            try:
+                from ttboard.pins.upython import Pin
+                from ttboard.pins.gpio_map_dbv3 import GPIOMapTTDBv3
+                self._led = Pin(GPIOMapTTDBv3.RP_LED, Pin.OUT)
+            except Exception as e:
+                log.error(f'Demo: no LED for the error display ({e})')
+        self._timer = self._timer_class()
+        self._timer.init(period=self.PeriodMs, mode=self._timer_class.PERIODIC,
+                         callback=self._blink)
+
+    def stop(self, release_pins: bool = True):
+        if self._timer is not None:
+            self._timer.deinit()
+            self._timer = None
+        if self._hooked:
+            if self._tt.shuttle.design_enabled_callback == self._design_enabled:
+                self._tt.shuttle.design_enabled_callback = self._orig_callback
+            self._hooked = False
+        if self._segments and release_pins:
+            self._tt.ui_in.value = 0
+            self._tt.reset_project(False)
+        self._segments = False
+        if self._led is not None:
+            self._led(0)
+
+    def _design_enabled(self, design):
+        orig = self._orig_callback
+        # a project was picked by hand: get out of its way
+        self.stop(release_pins=False)
+        if orig is not None:
+            orig(design)
+
+    def _blink(self, _timer):
+        self._on = not self._on
+        try:
+            if self._segments:
+                self._tt.ui_in.value = self.Pattern if self._on else 0
+            if self._led is not None:
+                self._led(1 if self._on else 0)
+        except Exception:
+            pass
+
+
+class StepPlayer:
+    '''
+        Plays an entry's "steps", looping: "set" is applied at once,
+        "wait_ms" arms a one-shot timer.  When the steps run out the
+        project is reset and they start over.
     '''
 
-    def __init__(self, tt, base: int, keys: dict, timer_class=Timer, sleep_ms=None):
+    def __init__(self, tt, steps: list, timer_class=Timer, sleep_ms=None):
         self._tt = tt
-        # the ui_in value the entry set up; for "gamepad" its pins other
-        # than ui[4..6] are kept, and it is restored when we stop
-        self.base = base
-        self.via = keys['via']
-        self.steps = keys['steps']
+        self.steps = steps
         self._timer_class = timer_class
         if sleep_ms is None:
             import ttboard.util.time as time
@@ -339,13 +402,14 @@ class KeyPlayer:
         self._step = 0
         self._waiting = False
         self.passes = 0
-        self.value = None    # last value set
 
     @property
     def running(self) -> bool:
         return self._active
 
     def start(self):
+        if not len(self.steps):
+            return
         self._active = True
         self._step = 0
         self._waiting = False
@@ -357,83 +421,52 @@ class KeyPlayer:
     def stop(self):
         if self._timer is not None:
             self._timer.deinit()
-        if self._active:
-            self._active = False
-            if self.via == 'ui':
-                self._tt.ui_in.value = self.base
-            else:
-                self._send_gamepad(0)
-
-    def _set(self, v: int):
-        self.value = v
-        if self.via == 'ui':
-            self._tt.ui_in.value = v
-        else:
-            self._send_gamepad(v)
-
-    def _send_gamepad(self, report: int):
-        # same waveform as the VGA playground's Gamepad Pmod emulation:
-        # 24 bits, LSB first (the lower 12 are a second, absent controller),
-        # data changed while the clock is low, then one latch pulse
-        port = self._tt.ui_in
-        idle = self.base & ~GamepadPins
-        data_reg = report << 12
-        for i in range(24):
-            v = idle | (GamepadDataBit if (data_reg >> i) & 1 else 0)
-            port.value = v
-            port.value = v | GamepadClockBit
-        port.value = idle
-        port.value = idle | GamepadLatchBit
-        port.value = idle
+        self._active = False
 
     def _run(self):
         # run steps until one waits; the steps always wait for some time
-        # in total (parse_keys checks), so this terminates.  A wait step is
-        # only passed once its timer has fired, so a pass (and reset_every)
-        # completes at the end of the last wait, not its start.
+        # in total (validate() checks), so this terminates.  A wait is only
+        # passed once its timer has fired, so a pass ends at the end of the
+        # last wait, not its start.
         while self._active:
-            kind, v = self.steps[self._step]
-            if kind == 'set':
-                self._set(v)
-            elif v > 0 and not self._waiting:
+            step = self.steps[self._step]
+            if 'set' in step:
+                self._tt.ui_in.value = step['set']
+            elif step['wait_ms'] > 0 and not self._waiting:
                 self._waiting = True
-                self._timer.init(period=v, mode=self._timer_class.ONE_SHOT,
+                self._timer.init(period=step['wait_ms'], mode=self._timer_class.ONE_SHOT,
                                  callback=self._on_timer)
                 return
             self._waiting = False
-            self._advance()
-
-    def _advance(self):
-        self._step += 1
-        if self._step < len(self.steps):
-            return
-        # out of steps: start over from the same reset state
-        self._step = 0
-        self.passes += 1
-        self._tt.reset_project(True)
-        self._sleep_ms(2)
-        self._tt.reset_project(False)
-        self._tt.ui_in.value = self.base
+            self._step += 1
+            if self._step == len(self.steps):
+                # out of steps: reset the project and start over
+                self._step = 0
+                self.passes += 1
+                self._tt.reset_project(True)
+                self._sleep_ms(2)
+                self._tt.reset_project(False)
 
     def _on_timer(self, _timer):
         try:
             self._run()
         except Exception as e:
-            log.error(f'Demo: keys error: {e}')
+            log.error(f'Demo: steps error: {e}')
 
 
 class DemoRunner:
     '''
-        Cycles through a playlist on a one-shot machine.Timer that is
-        re-armed after every switch, so each entry can have its own
-        duration.  Available as tt.demo.
+        Shows each project of a validated sequence in turn, on a one-shot
+        machine.Timer re-armed after every switch.  Available as tt.demo.
     '''
 
-    def __init__(self, tt, entries: list, default_duration_ms=DefaultDurationMs,
-                 timer_class=Timer, sleep_ms=None):
+    def __init__(self, tt, entries: list, path: str = None, timer_class=Timer,
+                 sleep_ms=None, error_display=None):
         self._tt = tt
         self._shuttle = tt.shuttle
-        self.default_duration_ms = default_duration_ms
+        self.playlist = list(entries)
+        self.path = path
+        self.errors = []
         self._timer_class = timer_class
         self._sleep_ms = sleep_ms
         self._timer = None
@@ -441,21 +474,10 @@ class DemoRunner:
         self._active = False
         self._orig_callback = None
         self._player = None
+        self._error_display = error_display
         # True while we enable a project, so our design-enabled hook
         # can tell our switches apart from manual ones
         self.switching = False
-        self.playlist = []
-        for e in entries:
-            if self._available(e):
-                self.playlist.append(e)
-            else:
-                log.warn(f'Demo: project {entry_key(e)} is not on this shuttle, skipping')
-
-    def _available(self, entry: dict) -> bool:
-        try:
-            return self._shuttle.get(entry_key(entry)) is not None
-        except Exception:
-            return False
 
     @property
     def running(self) -> bool:
@@ -467,6 +489,20 @@ class DemoRunner:
             return None
         return self.playlist[self._index]
 
+    def fail(self, errors: list):
+        '''
+            Stop, log every error and show the error display.
+        '''
+        self.stop()
+        self.errors = list(errors)
+        where = f' in {self.path}' if self.path else ''
+        log.error(f'Demo: {len(self.errors)} problem(s){where}, not running the demo:')
+        for err in self.errors:
+            log.error(f'Demo:   {err}')
+        if self._error_display is None:
+            self._error_display = ErrorDisplay(self._tt, self._timer_class)
+        self._error_display.start()
+
     def start(self) -> bool:
         '''
             Start the demo with the first project.  Returns True if it is
@@ -475,19 +511,16 @@ class DemoRunner:
         if self._active:
             return True
         if not len(self.playlist):
-            log.warn('Demo: nothing to show for this shuttle')
+            log.warn('Demo: nothing to show')
             return False
         if self._timer is None:
             self._timer = self._timer_class()
         self._install_hook()
         self._active = True
         self._index = -1
-        if self._advance() is None:
-            log.error('Demo: no project in the playlist could be enabled')
-            self.stop()
+        if not self._advance():
             return False
-        log.info(f'Demo: started, {len(self.playlist)} project(s)')
-        self._arm()
+        log.info(f'Demo: started, {len(self.playlist)} project(s) from {self.path}')
         return True
 
     def stop(self):
@@ -500,25 +533,25 @@ class DemoRunner:
         self._remove_hook()
 
     def next(self):
-        '''
-            Switch to the next project now (restarting its timer if the
-            demo is running).
-        '''
-        if self._advance() is not None and self._active:
-            self._arm()
+        '''Switch to the next project now.'''
+        if self._active:
+            self._advance()
 
-    def _advance(self):
-        n = len(self.playlist)
-        for _attempt in range(n):
-            self._index = (self._index + 1) % n
-            entry = self.playlist[self._index]
-            try:
-                if self._show(entry):
-                    return entry
-                log.warn(f'Demo: could not enable project {entry_key(entry)}, skipping')
-            except Exception as e:
-                log.error(f'Demo: error showing project {entry_key(entry)}: {e}')
-        return None
+    def _advance(self) -> bool:
+        self._index = (self._index + 1) % len(self.playlist)
+        entry = self.playlist[self._index]
+        try:
+            ok = self._show(entry)
+        except Exception as e:
+            self.fail([f'project {entry_key(entry)}: {e}'])
+            return False
+        if not ok:
+            self.fail([f'project {entry_key(entry)} could not be enabled'])
+            return False
+        if len(self.playlist) > 1:
+            self._timer.init(period=entry['duration_ms'], mode=self._timer_class.ONE_SHOT,
+                             callback=self._on_timer)
+        return True
 
     def _show(self, entry: dict) -> bool:
         self._stop_player()
@@ -537,18 +570,13 @@ class DemoRunner:
             return False
 
         tt = self._tt
-        if 'clock_hz' in entry:
+        if entry['clock_hz']:
             tt.clock_project_PWM(entry['clock_hz'])
-        if 'uio_oe_pico' in entry:
-            tt.uio_oe_pico.value = entry['uio_oe_pico']
-        if 'uio_in' in entry:
-            tt.uio_in.value = entry['uio_in']
-        if 'ui_in' in entry:
-            tt.ui_in.value = entry['ui_in']
-        if 'keys' in entry:
-            base = entry['ui_in'] if 'ui_in' in entry else tt.ui_in.value
-            self._player = KeyPlayer(tt, base, entry['keys'], self._timer_class,
-                                     self._sleep_ms)
+        else:
+            tt.clock_project_stop()
+        tt.ui_in.value = entry['ui_in']
+        if len(entry['steps']):
+            self._player = StepPlayer(tt, entry['steps'], self._timer_class, self._sleep_ms)
             self._player.start()
         return True
 
@@ -557,23 +585,11 @@ class DemoRunner:
             self._player.stop()
             self._player = None
 
-    def _arm(self):
-        if len(self.playlist) < 2:
-            return
-        ms = self.current.get('duration_ms', self.default_duration_ms)
-        self._timer.init(period=ms, mode=self._timer_class.ONE_SHOT,
-                         callback=self._on_timer)
-
     def _on_timer(self, _timer):
         # never let an exception escape a timer callback
         try:
-            if not self._active:
-                return
-            if self._advance() is None:
-                log.error('Demo: no project could be enabled, stopping')
-                self.stop()
-                return
-            self._arm()
+            if self._active:
+                self._advance()
         except Exception as e:
             log.error(f'Demo: timer error: {e}')
 
@@ -595,6 +611,8 @@ class DemoRunner:
             self.stop()
 
     def __repr__(self):
+        if self.errors:
+            return f'<DemoRunner FAILED, {len(self.errors)} error(s) in {self.path}: see .errors>'
         state = 'running' if self._active else 'stopped'
         keys = ', '.join(str(entry_key(e)) for e in self.playlist)
         return f'<DemoRunner {state}, {len(self.playlist)} projects: {keys}>'

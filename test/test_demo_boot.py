@@ -1,12 +1,10 @@
 '''
-Tests for the demo boot trigger (project reset button held at power-up)
-and the autostart decision.
+Tests for the demo boot trigger (project reset button held at power-up).
+The autostart decision is in test_demo_autostart.py.
 
 Run with:
     PYTHONPATH=src:microcotb/src pytest test/test_demo_boot.py
 '''
-import json
-
 from ttboard import demo
 
 
@@ -78,73 +76,3 @@ def test_stuck_low_times_out():
     assert clock.ms >= 2000
     assert led.writes[-1] == 0
 
-
-class FakeShuttle:
-    run = 'tt09'
-
-    def __init__(self, keys):
-        self.keys = keys
-        self.design_enabled_callback = None
-        self.enabled = None
-
-    def get(self, n):
-        if n not in self.keys:
-            raise AttributeError(n)
-        shuttle = self
-
-        class D:
-            name = n
-
-            def enable(self, force=False):
-                # like the real muxes, record the design object itself
-                shuttle.enabled = self
-                return True
-        return D()
-
-
-class FakeTT:
-    def __init__(self):
-        self.shuttle = FakeShuttle([1, 2])
-
-
-def write(tmp_path, conf):
-    p = tmp_path / 'demo.json'
-    p.write_text(json.dumps(conf))
-    return str(p)
-
-
-PLAYLIST = {'shuttles': {'tt09': {'projects': [{'address': 1, 'subtile': 0},
-                                               {'address': 2, 'subtile': 0}]}}}
-
-
-def test_autostart_not_enabled_not_held(tmp_path):
-    run = demo.autostart(FakeTT(), False, write(tmp_path, PLAYLIST))
-    assert run is not None
-    assert not run.running
-
-
-def test_autostart_held_starts(tmp_path):
-    tt = FakeTT()
-    run = demo.autostart(tt, True, write(tmp_path, PLAYLIST))
-    assert run.running
-    assert tt.shuttle.enabled.name == 1
-    run.stop()
-
-
-def test_autostart_enabled_starts(tmp_path):
-    run = demo.autostart(FakeTT(), False, write(tmp_path, dict(PLAYLIST, enabled=True)))
-    assert run.running
-    run.stop()
-
-
-def test_autostart_enabled_and_held_skips(tmp_path):
-    # holding the button on a kiosk board skips the demo for this boot
-    run = demo.autostart(FakeTT(), True, write(tmp_path, dict(PLAYLIST, enabled=True)))
-    assert not run.running
-
-
-def test_autostart_no_config(tmp_path):
-    run = demo.autostart(FakeTT(), True, str(tmp_path / 'missing.json'))
-    assert run is not None
-    assert not run.running
-    assert run.playlist == []
