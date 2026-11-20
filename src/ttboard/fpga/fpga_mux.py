@@ -25,7 +25,7 @@ class BitStream:
         return self._filepath
     
     def enable(self, force:bool=False):
-        self._loader.enable(self, force)
+        return self._loader.enable(self, force)
         
     @property 
     def clock_hz(self):
