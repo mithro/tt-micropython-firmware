@@ -28,6 +28,9 @@ PROJECTS = [
      'danger_level': 'medium'},
     {'macro': 'tt_um_sub', 'address': 5, 'clock_hz': 0, 'title': 's',
      'type': 'subtile', 'subtile_addr': 2, 'subtile_addr_bits': 2},
+    # renamed on the board by DesignIndex._wokwi_name_cleanup
+    {'macro': 'tt_um_wokwi_123456789', 'address': 6, 'clock_hz': 0,
+     'title': 'My Wokwi Thing'},
 ]
 
 
@@ -59,13 +62,17 @@ def board(tmp_path, monkeypatch):
     return tt, _demo
 
 
+def E(address, subtile=0, **kw):
+    return dict(address=address, subtile=subtile, **kw)
+
+
 def playlist(*projects, **kw):
     return dict({'shuttles': {'ttfake': {'projects': list(projects)}}}, **kw)
 
 
 def test_demo_cycles_real_projects(board):
     tt, start_demo = board
-    run = start_demo(playlist('tt_um_vga_a', 'tt_um_vga_b'), held=True)
+    run = start_demo(playlist(E(2), E(3)), held=True)
     assert run.running
     assert tt.shuttle.enabled.name == 'tt_um_vga_a'
     run._timer.callback(run._timer)
@@ -78,8 +85,7 @@ def test_demo_cycles_real_projects(board):
 
 def test_demo_override_on_top_of_config_ini(board):
     tt, start_demo = board
-    run = start_demo(playlist('tt_um_vga_a', {'macro': 'tt_um_vga_b', 'ui_in': 0x42}),
-                     held=True)
+    run = start_demo(playlist(E(2), E(3, ui_in=0x42)), held=True)
     run.next()
     assert tt.shuttle.enabled.name == 'tt_um_vga_b'
     assert tt.ui_in.value == 0x42
@@ -88,25 +94,42 @@ def test_demo_override_on_top_of_config_ini(board):
 
 def test_dangerous_project_skipped(board):
     tt, start_demo = board
-    run = start_demo(playlist('tt_um_risky', 'tt_um_vga_b'), held=True)
+    run = start_demo(playlist(E(4), E(3)), held=True)
     assert run.running
     assert tt.shuttle.enabled.name == 'tt_um_vga_b'
     run.stop()
 
 
-def test_address_entries(board):
+def test_subtile_and_wokwi_by_address(board):
     tt, start_demo = board
-    run = start_demo(playlist({'address': '3'}, {'address': '5-2'}), held=True)
-    assert len(run.playlist) == 2
-    assert tt.shuttle.enabled.name == 'tt_um_vga_b'
-    run.next()
+    run = start_demo(playlist(E(5, 2), E(6), E(99)), held=True)
+    assert len(run.playlist) == 2            # 99 is not on the shuttle
     assert tt.shuttle.enabled.name == 'tt_um_sub'
+    run.next()
+    # the board's name for it differs from the index macro; the address finds it
+    assert tt.shuttle.enabled.name.startswith('wokwi_my_wokwi_thing')
     run.stop()
+
+
+def test_keys_on_real_board(board):
+    tt, start_demo = board
+    keys = {'via': 'ui', 'steps': [{'set': 5}, {'wait_ms': 40}, {'set': 7}, {'wait_ms': 60}]}
+    run = start_demo(playlist(E(2, ui_in=7, keys=keys), E(3)), held=True)
+    player = run._player
+    assert tt.ui_in.value == 5
+    player._timer.callback(player._timer)
+    assert tt.ui_in.value == 7
+    player._timer.callback(player._timer)    # end of pass: reset, base, step 1
+    assert player.passes == 1
+    assert tt.ui_in.value == 5
+    assert tt.rst_n() == 1                   # project left out of reset
+    run.stop()
+    assert tt.ui_in.value == 7               # base restored
 
 
 def test_manual_enable_stops_demo_and_keeps_config(board):
     tt, start_demo = board
-    run = start_demo(playlist('tt_um_vga_a', 'tt_um_vga_a'), held=True)
+    run = start_demo(playlist(E(2), E(2)), held=True)
     assert run.running
     tt.shuttle.tt_um_vga_b.enable()
     assert not run.running
@@ -117,6 +140,6 @@ def test_manual_enable_stops_demo_and_keeps_config(board):
 
 def test_not_started_leaves_default_project(board):
     tt, start_demo = board
-    run = start_demo(playlist('tt_um_vga_a', 'tt_um_vga_b'), held=False)
+    run = start_demo(playlist(E(2), E(3)), held=False)
     assert not run.running
     assert tt.shuttle.enabled.name == 'tt_um_factory_test'
