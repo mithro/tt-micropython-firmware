@@ -4,8 +4,12 @@ Created on Nov 8, 2025
 @author: Pat Deegan
 @copyright: Copyright (C) 2025 Pat Deegan, https://psychogenic.com
 '''
-import os.path 
+import os.path
 isfile = os.path.isfile
+
+# simulated RP system clock (the package __init__ defines the same
+# default, but its globals aren't visible from inside this module)
+RP2040SystemClockDefaultHz = 125000000
 
 class PIOClock:
     def __init__(self, pin):

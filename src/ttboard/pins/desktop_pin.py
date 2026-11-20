@@ -56,6 +56,8 @@ class ADC:
         return 0xdead
     
 class Timer:
+    ONE_SHOT = 0
+    PERIODIC = 1
     def __init__(self):
         self._freq = 0
         self._period = 0
