@@ -99,6 +99,13 @@ jobs:
              echo "Path is $RUNPATH"
              for chip in $TT_RUNS_SUPPORTED; do PYTHONPATH=$RUNPATH python3 $GITHUB_WORKSPACE/sdk_repo/bin/serialize_shuttle.py $GITHUB_WORKSPACE/sdk_repo/fsroot/shuttles/$chip.json; done
 
+      - name: Check and bundle demo sequences
+        working-directory: sdk_repo
+        run: |
+             PYTHONPATH="$GITHUB_WORKSPACE/sdk_repo/convwork" python3 bin/check_demo_sequences.py demos fsroot/shuttles
+             shopt -s nullglob
+             for f in demos/*.demo.json; do echo "bundling $f"; cp "$f" fsroot/shuttles/; done
+
       - name: Install dependencies and toolchain
         run: |
           sudo apt update

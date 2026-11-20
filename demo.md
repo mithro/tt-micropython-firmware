@@ -7,7 +7,7 @@ Demo mode cycles through a fixed sequence of projects on its own, for instance t
  * Set `demo = yes` in the `[DEFAULT]` section of [config.ini](config.md) and the demo runs on every boot.
  * **Hold the project reset (RST) button while plugging in power** to flip that setting for one boot: the demo runs on a board that normally doesn't, and is skipped on one that normally does.  The LED blinks while the button is held; let go and the board carries on booting.
 
-The sequence shown is `/demo.json` if that file exists, otherwise the one bundled with the firmware for the detected chip, `/shuttles/<shuttle>.demo.json`.
+The sequence shown is `/demo.json` if that file exists, otherwise the one bundled with the firmware for the detected chip, `/shuttles/<shuttle>.demo.json`.  The bundled ones live in this repo's [demos](demos/) directory, and the release build checks each against its shuttle's index.
 
 From the REPL, the demo is available as `tt.demo`:
 
