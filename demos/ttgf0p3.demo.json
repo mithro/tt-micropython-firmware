@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "shuttle": "ttgf0p3",
+  "projects": [
+    {"address": 3, "subtile": 0, "duration_ms": 15000, "clock_hz": 25175000, "ui_in": 0, "steps": []},
+    {"address": 448, "subtile": 0, "duration_ms": 15000, "clock_hz": 25175000, "ui_in": 0, "steps": []},
+    {"address": 288, "subtile": 0, "duration_ms": 15000, "clock_hz": 25175000, "ui_in": 0, "steps": []},
+    {"address": 356, "subtile": 0, "duration_ms": 15000, "clock_hz": 25175000, "ui_in": 0, "steps": []}
+  ]
+}
