@@ -52,7 +52,25 @@ The project's own [config.ini](config.md) section, if any, is applied first, as 
 
 ### steps
 
-Run in order.  Each step has exactly one key: `{"set": N}` writes `ui_in` (0-255) at once, `{"wait_ms": N}` waits.  When the steps run out the project is reset and they start again from the first step -- `ui_in` is not set again, so begin with a `set` if the starting value matters.  This repeats until the project's time is up.  A project with no steps is never reset while shown.
+Run in order.  Each step has exactly one key: `{"set": N}` writes `ui_in` (0-255) at once, `{"gamepad": [...]}` sets the buttons held on an emulated Gamepad Pmod (below), `{"wait_ms": N}` waits.  When the steps run out the project is reset and they start again from the first step -- `ui_in` is not set again, so begin with a `set` if the starting value matters.  This repeats until the project's time is up.  A project with no steps is never reset while shown.
+
+### Gamepad Pmod emulation
+
+Designs that read the [Gamepad Pmod](https://github.com/psychogenic/gamepad-pmod) (latch on `ui_in[4]`, clock on `ui_in[5]`, data on `ui_in[6]`) can be played with no Pmod plugged in: the board sends the design what the Pmod would.
+
+```
+{"gamepad": [{"buttons": ["start"]}]}                   one controller, holding Start
+{"gamepad": [{"buttons": ["a"]}, {"buttons": ["left"]}]}  two controllers
+{"gamepad": [{"buttons": []}]}                          one controller, nothing pressed
+{"gamepad": []}                                         no controllers plugged in
+```
+
+ * The list is the controllers plugged into the Pmod, player 1 first: 0, 1 or 2 of them.  Player 1 is the one a design's `gamepad_pmod_single` reads (index 0 of `gamepad_pmod_dual`).
+ * `buttons` names the buttons held, each once, in the order the Pmod sends them: `b`, `y`, `select`, `start`, `up`, `down`, `left`, `right`, `a`, `x`, `l`, `r`.  All twelve at once can't be sent (it reads as "no controller").
+ * The buttons stay held until the next `gamepad` step.  Until the first one the design sees no controllers.
+ * Like the Pmod, the board sends a report of 24 bits (an empty socket sends twelve 1s; player 1 is sent last, LSB first), data then clock high then clock low for each bit, then a latch pulse, and leaves the three lines low.  It sends one report at each `gamepad` step and again after the reset at the end of the steps (which clears the design's copy).  The real Pmod also repeats its report every second; nothing else on the board would make the design forget it, so the board doesn't.
+ * The board writes the levels with `ui_in` writes from Python, so each level lasts some microseconds: much slower than the design clock, which the designs' synchronizers need.
+ * In a project with `gamepad` steps, `ui_in` and every `set` must keep bits 4..6 (0x70) clear: those are the gamepad's.  It must also have a clock (`clock_hz` > 0): the design reads the gamepad on its clock.
 
 ## Errors
 
