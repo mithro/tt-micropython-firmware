@@ -69,7 +69,7 @@ Designs that read the [Gamepad Pmod](https://github.com/psychogenic/gamepad-pmod
  * `buttons` names the buttons held, each once, in the order the Pmod sends them: `b`, `y`, `select`, `start`, `up`, `down`, `left`, `right`, `a`, `x`, `l`, `r`.  All twelve at once can't be sent (it reads as "no controller").
  * The buttons stay held until the next `gamepad` step.  Until the first one the design sees no controllers.
  * Like the Pmod, the board sends a report of 24 bits (an empty socket sends twelve 1s; player 1 is sent last, LSB first), data then clock high then clock low for each bit, then a latch pulse, and leaves the three lines low.  It sends one report at each `gamepad` step and again after the reset at the end of the steps (which clears the design's copy).  The real Pmod also repeats its report every second; nothing else on the board would make the design forget it, so the board doesn't.
- * The board writes the levels with `ui_in` writes from Python, so each level lasts some microseconds: much slower than the design clock, which the designs' synchronizers need.
+ * The board writes the levels from Python, so they are slower than the Pmod's (about 17 µs per level and 1 ms per report on an RP2350, against the Pmod's 2-4 µs): a design built for the Pmod reads them too.  The steps' timing is a little longer for it, about a millisecond per `gamepad` step.
  * In a project with `gamepad` steps, `ui_in` and every `set` must keep bits 4..6 (0x70) clear: those are the gamepad's.  It must also have a clock (`clock_hz` > 0): the design reads the gamepad on its clock.
 
 ## Errors

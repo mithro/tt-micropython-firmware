@@ -508,3 +508,23 @@ def test_runner_passes_ui_in_to_the_gamepad():
     assert w[0] == 0x81
     assert all(v & ~0x70 == 0x81 for v in w[1:])
     assert pmod_decode(w[1:]) == [[['a'], None]]
+
+
+class FastPort(WatchedPort):
+    '''A port with the SDK's byte_write beside .value, as in ASIC_RP_CONTROL.'''
+    def __init__(self, value=0):
+        super().__init__(value)
+        self.fast = []
+
+    def byte_write(self, v):
+        self.fast.append(v)
+
+
+def test_gamepad_report_uses_byte_write_when_there_is_one():
+    tt = FakeTT(FakeShuttle([]))
+    tt.ui_in = FastPort()
+    p = StepPlayer(tt, PAD, timer_class=FakeTimer, sleep_ms=lambda ms: None, ui_in=0)
+    p.start()
+    assert tt.ui_in.writes == [1]              # "set" still goes through .value
+    assert pmod_decode(tt.ui_in.fast) == [[['start'], None]]
+    assert all(v & ~0x70 == 1 for v in tt.ui_in.fast)
