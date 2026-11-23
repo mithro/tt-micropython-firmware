@@ -2,8 +2,19 @@ name: UF2 Generate and Release
 
 on:
   push:
+    # every branch push publishes a rolling pre-release, dev-<branch>;
+    # a v* tag publishes the real release
+    branches: [ '**' ]
     tags: [ 'v*' ]
   workflow_dispatch:   # Allows manual triggering
+
+permissions:
+  contents: write      # create releases and their tags
+
+concurrency:
+  # a newer push to the same branch replaces a build still running
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-micropython:
@@ -21,18 +32,23 @@ jobs:
         run: |
           RAW_VERSION="${{ github.ref_name }}"
           CLEAN_REF="${RAW_VERSION#v}"
+          # branch names may contain '/', which can't go in a file or tag name
+          SAFE_REF="${CLEAN_REF//\//-}"
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             VERSION="${CLEAN_REF}"
             VERSION_NAME="v${VERSION}"
           else
             # Fallback when running on branch (e.g. ttdbv3) or manual trigger
-            # Get the most recent tag in the entire repository
-            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            # Get the most recent release tag (v*, not the dev-* pre-release tags)
+            LATEST_TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo "")
             VERSION="${LATEST_TAG#v}"
-            VERSION_NAME="${CLEAN_REF}-v${VERSION}-dev-${GITHUB_SHA::8}"
+            VERSION_NAME="${SAFE_REF}-v${VERSION}-dev-${GITHUB_SHA::8}"
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$VERSION"
+            echo "version_name=$VERSION_NAME"
+            echo "dev_tag=dev-${SAFE_REF}"
+          } >> "$GITHUB_OUTPUT"
           echo "Using version: $VERSION ($VERSION_NAME)"
       - name: Checkout MicroPython repository
         uses: actions/checkout@v4
@@ -152,3 +168,24 @@ jobs:
             artifacts: "/tmp/tt-demo-rp2350-${{ steps.version.outputs.version_name }}.uf2"
             token: ${{ secrets.GITHUB_TOKEN }}
             generateReleaseNotes: true
+
+      - name: Publish branch pre-release
+        if: github.ref_type == 'branch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.dev_tag }}
+          UF2: /tmp/tt-demo-rp2350-${{ steps.version.outputs.version_name }}.uf2
+        run: |
+          # one rolling pre-release per branch: replace it (and move its tag)
+          # so it always holds the UF2 of the branch's latest push
+          if gh release view "$TAG" > /dev/null; then
+            gh release delete "$TAG" --cleanup-tag --yes
+          elif git ls-remote --exit-code --tags origin "refs/tags/$TAG"; then
+            git push origin ":refs/tags/$TAG"
+          fi
+          gh release create "$TAG" "$UF2" \
+            --target "$GITHUB_SHA" \
+            --prerelease --latest=false \
+            --title "${{ github.ref_name }} (development build ${GITHUB_SHA::8})" \
+            --notes "Automatic build of branch \`${{ github.ref_name }}\` at ${GITHUB_SHA}, replaced on every push. Not a release: for those see the v* tags."
