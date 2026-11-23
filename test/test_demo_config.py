@@ -190,3 +190,52 @@ def test_demo_setting(tmp_path, ini, expected):
 
 def test_demo_setting_no_file(tmp_path):
     assert demo.demo_setting(str(tmp_path / 'none.ini')) is False
+
+
+GAMEPAD = [{'gamepad': [{'buttons': ['start']}]}, {'wait_ms': 100}]
+
+
+def test_gamepad_steps_valid():
+    steps = [{'set': 0x81}, {'gamepad': []}, {'gamepad': [{'buttons': []}, {'buttons': ['b', 'r']}]},
+             {'gamepad': [{'buttons': list(demo.GamepadButtons[:11])}]}, {'wait_ms': 10}]
+    assert demo.validate(with_entry(ui_in=0x8f, steps=steps), 'ttsky25a')[1] == []
+
+
+ORDER = 'in the order b, y, select, start, up, down, left, right, a, x, l, r'
+
+
+@pytest.mark.parametrize('pad,expected', [
+    ({}, '"gamepad" must be a list of 0 to 2 controllers, got {}'),
+    ([{'buttons': []}] * 3, '"gamepad" must be a list of 0 to 2 controllers, got '
+                            "[{'buttons': []}, {'buttons': []}, {'buttons': []}]"),
+    (['a'], 'gamepad controller 1 must be an object with exactly one key, "buttons": a'),
+    ([{'buttons': [], 'player': 1}], 'gamepad controller 1 must be an object with exactly one key, '
+                                     "\"buttons\": {'buttons': [], 'player': 1}"),
+    ([{'buttons': 'a'}], 'gamepad controller 1: "buttons" must be a list, got a'),
+    ([{'buttons': []}, {'buttons': ['A']}], 'gamepad controller 2: unknown button A'),
+    ([{'buttons': ['a', 'b']}], f'gamepad controller 1: "buttons" must name each button once, {ORDER}, '
+                                "got ['a', 'b']"),
+    ([{'buttons': ['b', 'b']}], f'gamepad controller 1: "buttons" must name each button once, {ORDER}, '
+                                "got ['b', 'b']"),
+    ([{'buttons': list(demo.GamepadButtons)}], 'gamepad controller 1: all 12 buttons at once '
+                                               'reads as no controller'),
+])
+def test_bad_gamepad_steps(pad, expected):
+    _, errors = demo.validate(with_entry(steps=[{'gamepad': pad}, {'wait_ms': 1}]), 'ttsky25a')
+    assert errors == ['project 0 step 0: ' + expected]
+
+
+def test_gamepad_pins_must_be_left_to_the_gamepad():
+    _, errors = demo.validate(with_entry(ui_in=0x17, steps=[{'set': 0x40}] + GAMEPAD), 'ttsky25a')
+    assert errors == [
+        'project 0 step 0: "set" must keep bits 4..6 (the gamepad) clear, got 64',
+        'project 0: "ui_in" must keep bits 4..6 (the gamepad) clear, got 23',
+    ]
+    # without a gamepad step those bits are ordinary inputs
+    assert demo.validate(with_entry(ui_in=0x17, steps=[{'set': 0x40}, {'wait_ms': 1}]), 'ttsky25a')[1] == []
+
+
+def test_gamepad_needs_a_clock():
+    _, errors = demo.validate(with_entry(clock_hz=0, steps=GAMEPAD), 'ttsky25a')
+    assert errors == ['project 0: "clock_hz" must be > 0 with "gamepad" steps: '
+                      'the design reads the gamepad on its clock']

@@ -28,6 +28,14 @@ waits.  When the steps run out the project is reset and they start over
 from the first step (ui_in is not re-applied: start with a "set" if it
 matters).  An empty "steps" list plays nothing and never resets.
 
+{"gamepad": [{"buttons": ["start"]}]} plays a Gamepad Pmod with no Pmod
+plugged in: it lists the controllers plugged in (0 to 2, player 1
+first) and the buttons each is holding, named as in GamepadButtons and
+in that order.  The board sends that to the design on ui_in[6:4], as
+the Pmod does, and the buttons stay held until the next "gamepad" step.
+An entry with "gamepad" steps must leave ui_in bits 4..6 clear in its
+"ui_in" and "set" values, and must have a clock.
+
 An invalid sequence is never shown partly: every problem is logged, and
 the board shows an error pattern instead (see ErrorDisplay).
 
@@ -59,6 +67,63 @@ Version = 1
 
 _TopFields = ('version', 'shuttle', 'projects')
 _EntryFields = ('address', 'subtile', 'duration_ms', 'clock_hz', 'ui_in', 'steps')
+
+# The Gamepad Pmod (github.com/psychogenic/gamepad-pmod), emulated on the
+# inputs it plugs into: ui_in[4] latch, ui_in[5] clock, ui_in[6] data.
+# Its buttons, in the order it sends them (bit 0 is sent first).
+GamepadButtons = ('b', 'y', 'select', 'start', 'up', 'down', 'left', 'right',
+                  'a', 'x', 'l', 'r')
+GamepadPins = 0x70
+_PadLatch = 0x10
+_PadClock = 0x20
+_PadData = 0x40
+_NoController = 0xfff       # what an empty controller socket reads as
+
+
+def gamepad_word(controllers: list) -> int:
+    '''
+        The 24 bits the Pmod sends for these controllers (a "gamepad"
+        step's value), bit 0 first.  Like the Pmod, the first controller
+        (player 1) goes in the last 12 bits, where the designs'
+        gamepad_pmod_single and index 0 of gamepad_pmod_dual read it, and
+        a missing controller sends all ones.
+    '''
+    masks = []
+    for c in controllers:
+        m = 0
+        for b in c['buttons']:
+            m |= 1 << GamepadButtons.index(b)
+        masks.append(m)
+    while len(masks) < 2:
+        masks.append(_NoController)
+    return masks[1] | (masks[0] << 12)
+
+
+def gamepad_levels(word: int) -> list:
+    '''
+        The latch/clock/data levels (ui_in bits 4..6) that send one report,
+        as the Pmod's firmware does: for each bit, data, then clock high,
+        then clock low (designs sample on the rising edge); then a latch
+        pulse, which makes the design take the 24 bits; then all low, the
+        idle state.  A level equal to the one before is left out.
+    '''
+    seq = []
+    d = 0
+    for i in range(24):
+        d = _PadData if (word >> i) & 1 else 0
+        seq.append(d)
+        seq.append(d | _PadClock)
+        seq.append(d)
+    seq.append(d | _PadLatch)
+    seq.append(d)
+    seq.append(0)
+    out = []
+    last = 0
+    for v in seq:
+        if v != last:
+            out.append(v)
+            last = v
+    return out
 
 
 def shuttle_sequence_path(shuttle_run: str) -> str:
@@ -102,10 +167,50 @@ def entry_key(entry: dict):
     return entry['address']
 
 
+def _uses_gamepad(steps) -> bool:
+    if not isinstance(steps, list):
+        return False
+    for step in steps:
+        if isinstance(step, dict) and len(step) == 1 and 'gamepad' in step:
+            return True
+    return False
+
+
+def _check_gamepad(here: str, v, errors: list):
+    if not isinstance(v, list) or len(v) > 2:
+        errors.append(f'{here}: "gamepad" must be a list of 0 to 2 controllers, got {v}')
+        return
+    for j, c in enumerate(v):
+        what = f'{here}: gamepad controller {j + 1}'
+        if not isinstance(c, dict) or len(c) != 1 or 'buttons' not in c:
+            errors.append(f'{what} must be an object with exactly one key, "buttons": {c}')
+            continue
+        buttons = c['buttons']
+        if not isinstance(buttons, list):
+            errors.append(f'{what}: "buttons" must be a list, got {buttons}')
+            continue
+        unknown = [b for b in buttons if b not in GamepadButtons]
+        for b in unknown:
+            errors.append(f'{what}: unknown button {b}')
+        if len(unknown):
+            continue
+        order = [GamepadButtons.index(b) for b in buttons]
+        in_order = True
+        for k in range(1, len(order)):
+            if order[k] <= order[k - 1]:
+                in_order = False
+        if not in_order:
+            errors.append(f'{what}: "buttons" must name each button once, in the order '
+                          f'{", ".join(GamepadButtons)}, got {buttons}')
+        elif len(buttons) == len(GamepadButtons):
+            errors.append(f'{what}: all 12 buttons at once reads as no controller')
+
+
 def _check_steps(where: str, steps, errors: list):
     if not isinstance(steps, list):
         errors.append(f'{where}: "steps" must be a list')
         return
+    pad = _uses_gamepad(steps)
     total_wait = 0
     for i, step in enumerate(steps):
         here = f'{where} step {i}'
@@ -116,6 +221,10 @@ def _check_steps(where: str, steps, errors: list):
             v = step['set']
             if not (_is_int(v) and 0 <= v <= 0xff):
                 errors.append(f'{here}: "set" must be an integer 0..255, got {v}')
+            elif pad and v & GamepadPins:
+                errors.append(f'{here}: "set" must keep bits 4..6 (the gamepad) clear, got {v}')
+        elif 'gamepad' in step:
+            _check_gamepad(here, step['gamepad'], errors)
         elif 'wait_ms' in step:
             v = step['wait_ms']
             if not (_is_int(v) and v >= 0):
@@ -157,6 +266,13 @@ def _check_entry(where: str, e, errors: list):
             ok = False
     n = len(errors)
     _check_steps(where, e['steps'], errors)
+    if _uses_gamepad(e['steps']):
+        if _is_int(e['ui_in']) and e['ui_in'] & GamepadPins:
+            errors.append(f'{where}: "ui_in" must keep bits 4..6 (the gamepad) clear, '
+                          f'got {e["ui_in"]}')
+        if _is_int(e['clock_hz']) and e['clock_hz'] == 0:
+            errors.append(f'{where}: "clock_hz" must be > 0 with "gamepad" steps: '
+                          'the design reads the gamepad on its clock')
     return ok and len(errors) == n
 
 
@@ -392,13 +508,29 @@ class ErrorDisplay:
 class StepPlayer:
     '''
         Plays an entry's "steps", looping: "set" is applied at once,
-        "wait_ms" arms a one-shot timer.  When the steps run out the
-        project is reset and they start over.
+        "gamepad" sends a Gamepad Pmod report at once, "wait_ms" arms a
+        one-shot timer.  When the steps run out the project is reset and
+        they start over.
+
+        ui_in is the value the entry started with.  A report is sent by
+        writing ui_in over and over, with bits 4..6 driven as the Pmod
+        would and the rest as the last "set" (or ui_in) left them.  Between
+        reports the gamepad's pins are low, as the Pmod leaves them.  The
+        design keeps the last report until the next one, the buttons stay
+        "held" until then, and the reset at the end of a pass (which
+        forgets the report) is followed by sending it again.
     '''
 
-    def __init__(self, tt, steps: list, timer_class=Timer, sleep_ms=None):
+    def __init__(self, tt, steps: list, timer_class=Timer, sleep_ms=None, ui_in: int = 0):
         self._tt = tt
         self.steps = steps
+        self._ui_in = ui_in
+        # each "gamepad" step's report, worked out now, not in the timer
+        self._reports = {}
+        for i, step in enumerate(steps):
+            if 'gamepad' in step:
+                self._reports[i] = gamepad_levels(gamepad_word(step['gamepad']))
+        self._report = None
         self._timer_class = timer_class
         if sleep_ms is None:
             import ttboard.util.time as time
@@ -421,6 +553,7 @@ class StepPlayer:
         self._step = 0
         self._waiting = False
         self.passes = 0
+        self._report = None
         if self._timer is None:
             self._timer = self._timer_class()
         self._run()
@@ -438,7 +571,11 @@ class StepPlayer:
         while self._active:
             step = self.steps[self._step]
             if 'set' in step:
+                self._ui_in = step['set']
                 self._tt.ui_in.value = step['set']
+            elif 'gamepad' in step:
+                self._report = self._reports[self._step]
+                self._send_report()
             elif step['wait_ms'] > 0 and not self._waiting:
                 self._waiting = True
                 self._timer.init(period=step['wait_ms'], mode=self._timer_class.ONE_SHOT,
@@ -453,6 +590,15 @@ class StepPlayer:
                 self._tt.reset_project(True)
                 self._sleep_ms(2)
                 self._tt.reset_project(False)
+                if self._report is not None:
+                    # the reset cleared the design's copy; the buttons are still held
+                    self._send_report()
+
+    def _send_report(self):
+        port = self._tt.ui_in
+        base = self._ui_in
+        for v in self._report:
+            port.value = base | v
 
     def _on_timer(self, _timer):
         try:
@@ -583,7 +729,8 @@ class DemoRunner:
             tt.clock_project_stop()
         tt.ui_in.value = entry['ui_in']
         if len(entry['steps']):
-            self._player = StepPlayer(tt, entry['steps'], self._timer_class, self._sleep_ms)
+            self._player = StepPlayer(tt, entry['steps'], self._timer_class, self._sleep_ms,
+                                      entry['ui_in'])
             self._player.start()
         return True
 

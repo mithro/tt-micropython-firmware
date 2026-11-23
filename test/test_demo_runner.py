@@ -404,3 +404,107 @@ def test_error_display_led_only_without_factory_test():
     d._timer.fire()
     assert led.writes == [1]
     assert tt.ui_in.writes == []
+
+
+# --- Gamepad Pmod emulation ---
+
+from ttboard.demo import GamepadButtons, gamepad_levels, gamepad_word
+
+
+def pmod_decode(writes, start=0):
+    '''
+        What gamepad_pmod_driver + gamepad_pmod_decoder (the Verilog most
+        designs include) make of a series of ui_in values: data shifted in
+        on each rising clock edge, taken on each rising latch edge.
+        Returns the buttons each player holds per report (None: absent).
+    '''
+    shift = 0xffffff
+    reports = []
+    prev = start
+    for v in writes:
+        if v & 0x20 and not prev & 0x20:
+            shift = ((shift << 1) | ((v >> 6) & 1)) & 0xffffff
+        if v & 0x10 and not prev & 0x10:
+            players = []
+            for reg in (shift & 0xfff, shift >> 12):
+                if reg == 0xfff:
+                    players.append(None)
+                else:
+                    # {b, y, select, ..., r} = data_reg[11:0]: b is bit 11
+                    players.append([b for k, b in enumerate(GamepadButtons) if reg >> (11 - k) & 1])
+            reports.append(players)
+        prev = v
+    return reports
+
+
+def test_gamepad_word_puts_player1_last():
+    assert gamepad_word([]) == 0xffffff
+    assert gamepad_word([{'buttons': []}]) == 0x000fff
+    assert gamepad_word([{'buttons': ['b']}]) == 0x001fff
+    assert gamepad_word([{'buttons': ['start', 'r']}]) == ((1 << 3) | (1 << 11)) << 12 | 0xfff
+    assert gamepad_word([{'buttons': ['a']}, {'buttons': ['left']}]) == (1 << 8) << 12 | (1 << 6)
+
+
+def test_gamepad_levels_shape():
+    levels = gamepad_levels(gamepad_word([{'buttons': []}]))
+    # data only changes while the clock is low, and every level is new
+    for a, b in zip([0] + levels, levels):
+        assert a != b
+        if (a ^ b) & 0x40:
+            assert not a & 0x20 and not b & 0x20
+    assert all(v & ~0x70 == 0 for v in levels)
+    assert levels[-1] == 0                       # idle: everything low
+    assert sum(1 for a, b in zip([0] + levels, levels) if b & 0x20 and not a & 0x20) == 24
+    assert sum(1 for a, b in zip([0] + levels, levels) if b & 0x10 and not a & 0x10) == 1
+
+
+def test_gamepad_levels_decode_as_sent():
+    for controllers, expected in [
+        ([], [None, None]),
+        ([{'buttons': []}], [[], None]),
+        ([{'buttons': ['b', 'start', 'up', 'r']}], [['b', 'start', 'up', 'r'], None]),
+        ([{'buttons': ['a']}, {'buttons': ['select', 'left', 'x']}], [['a'], ['select', 'left', 'x']]),
+        ([{'buttons': list(GamepadButtons[:11])}], [list(GamepadButtons[:11]), None]),
+    ]:
+        assert pmod_decode(gamepad_levels(gamepad_word(controllers))) == [expected], controllers
+
+
+PAD = [{'set': 1}, {'gamepad': [{'buttons': ['start']}]}, {'wait_ms': 100},
+       {'gamepad': [{'buttons': []}]}, {'wait_ms': 50}]
+
+
+def test_gamepad_step_sends_a_report_over_ui_in():
+    tt = FakeTT(FakeShuttle([]))
+    p = StepPlayer(tt, PAD, timer_class=FakeTimer, sleep_ms=lambda ms: None, ui_in=3)
+    p.start()
+    w = tt.ui_in.writes
+    assert w[0] == 1
+    # the other bits stay as the last "set" left them, and the pins end low
+    assert all(v & ~0x70 == 1 for v in w[1:]) and w[-1] == 1
+    assert pmod_decode(w) == [[['start'], None]]
+    assert p._timer.period == 100
+    p._timer.fire()
+    assert pmod_decode(w) == [[['start'], None], [[], None]]
+
+
+def test_gamepad_report_resent_after_the_reset():
+    tt = FakeTT(FakeShuttle([]))
+    p = StepPlayer(tt, PAD[1:], timer_class=FakeTimer, sleep_ms=lambda ms: None, ui_in=2)
+    p.start()
+    p._timer.fire()
+    n = len(tt.ui_in.writes)
+    p._timer.fire()          # end of the pass: reset, the held buttons again, then step 1
+    assert tt.resets == [True, False]
+    after = tt.ui_in.writes[n:]
+    assert pmod_decode(after) == [[[], None], [['start'], None]]
+    assert all(v & ~0x70 == 2 for v in after)
+
+
+def test_runner_passes_ui_in_to_the_gamepad():
+    steps = [{'gamepad': [{'buttons': ['a']}]}, {'wait_ms': 10}]
+    tt, shuttle, run, _ = make([E(260, ui_in=0x81, clock_hz=25175000, steps=steps), E(2)])
+    run.start()
+    w = tt.ui_in.writes
+    assert w[0] == 0x81
+    assert all(v & ~0x70 == 0x81 for v in w[1:])
+    assert pmod_decode(w[1:]) == [[['a'], None]]
