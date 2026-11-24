@@ -1,3 +1,6 @@
 [submodule "microcotb"]
 	path = microcotb
 	url = https://github.com/psychogenic/microcotb.git
+[submodule "vgacap"]
+	path = vgacap
+	url = https://github.com/mithro/vgacap.git

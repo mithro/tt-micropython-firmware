@@ -20,6 +20,10 @@ jobs:
   build-micropython:
     env:
       TT_RUNS_SUPPORTED: "unknown tt08 ttihp0p2 tt09 ttihp25a ttihp0p3 ttcad25a ttihp25b ttsky25a ttgf0p1 ttsky25b ttgf0p2 ttgf0p3 ttgf26a ttgf26b"
+      # The MicroPython the demo boards run (1.29.0-preview b006887db6, read
+      # off fpga-4 on 2026-11-24), pinned so that the vgacap module (the
+      # vgacap submodule, mpy/) is built against what it was tested with.
+      MICROPYTHON_REF: b006887db6e4b18bce967ea87c7e63398f60b296
     runs-on: ubuntu-latest
     steps:
       - name: Checkout with full history and tags
@@ -55,6 +59,7 @@ jobs:
         with:
           repository: micropython/micropython
           path: micropython
+          ref: ${{ env.MICROPYTHON_REF }}
           submodules: recursive  # Initialize submodules
 
       - name: Checkout custom board definition
@@ -148,7 +153,8 @@ jobs:
         run: |
           make clean
           make submodules
-          make -j$(nproc) BOARD=tt_rp2350_board
+          # USER_C_MODULES: the vgacap capture module (vgacap/mpy/README.md)
+          make -j$(nproc) BOARD=tt_rp2350_board USER_C_MODULES=$GITHUB_WORKSPACE/sdk_repo/vgacap/mpy/micropython.cmake
           
     
       - name: Build the final UF2
