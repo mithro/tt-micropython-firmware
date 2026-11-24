@@ -1,0 +1,49 @@
+name: Sync main with upstream
+
+# Makes this fork's `main` exactly TinyTapeout/tt-micropython-firmware's main.
+# `main` is a mirror, never a place for work, so this force-pushes: anything
+# committed to the fork's main is overwritten. Work goes on feature branches,
+# merged together on `dev` (see README.md).
+#
+# Scheduled workflows only run from the default branch, so `actions` (the
+# branch holding this file) must stay the default branch for the schedule.
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'   # every 6 hours
+  workflow_dispatch:         # Allows manual triggering
+
+permissions:
+  contents: read             # the push uses the deploy key, not GITHUB_TOKEN
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/TinyTapeout/tt-micropython-firmware.git
+
+jobs:
+  sync-main:
+    runs-on: ubuntu-latest
+    steps:
+      # Push with a write deploy key (secret SYNC_DEPLOY_KEY); checkout keeps
+      # it configured for the later `git push`. GITHUB_TOKEN can move a branch
+      # onto upstream's existing commits, but is refused whenever a push
+      # writes new commits that change .github/workflows/ (tested 2026-11-24),
+      # so the key keeps this working whatever upstream does.
+      - name: Check out the fork's main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          ssh-key: ${{ secrets.SYNC_DEPLOY_KEY }}
+
+      - name: Fetch upstream main
+        run: git fetch --no-tags "$UPSTREAM_URL" +main:refs/remotes/upstream/main
+
+      - name: Force main to upstream/main
+        run: |
+          echo "fork main before: $(git rev-parse HEAD)"
+          echo "upstream main:    $(git rev-parse upstream/main)"
+          git push --force origin refs/remotes/upstream/main:refs/heads/main
