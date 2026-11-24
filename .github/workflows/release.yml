@@ -36,8 +36,10 @@ jobs:
         run: |
           RAW_VERSION="${{ github.ref_name }}"
           CLEAN_REF="${RAW_VERSION#v}"
-          # branch names may contain '/', which can't go in a file or tag name
-          SAFE_REF="${CLEAN_REF//\//-}"
+          # branch names may contain '/', which can't go in a file or tag name;
+          # and only a tag's leading v is a version prefix: a branch called
+          # vgacap-module must not publish as dev-gacap-module
+          SAFE_REF="${RAW_VERSION//\//-}"
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             VERSION="${CLEAN_REF}"
             VERSION_NAME="v${VERSION}"
