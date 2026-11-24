@@ -111,13 +111,42 @@ Where the value may be
 
 System-wide default settings supported are
 
-project: (string) name of project to load on boot, e.g. *tt_um_loopback*
+project: (string) name of project to load on boot, e.g. *tt_um_loopback*, or a comma-separated list of projects to cycle through (see below)
+
+switch_interval: (number) seconds to show each project when several are listed in *project*; defaults to 15, 0 loads only the first
 
 mode: (string) ASIC_RP_CONTROL, ASIC_MANUAL_INPUTS (to use the on-board switches/buttons), or SAFE 
 
 start_in_reset: (bool) whether projects should have their nRESET pin held low when enabled
 
 rp_clock_frequency: system clock frequency
+
+
+### Cycling through several projects
+
+List more than one project to have the board switch between them on its own, e.g. to leave a set of VGA demos running on a screen:
+
+```
+[DEFAULT]
+project = tt_um_vga_clock, tt_um_algofoogle_solo_squash, tt_um_factory_test
+switch_interval = 30
+```
+
+On boot the first project in the list is enabled, then every *switch_interval* seconds the next one is (wrapping around to the start).  Each project's own section, if any, is applied as usual whenever it's enabled, so clocks and inputs can be set per project.
+
+ * Names that aren't on the detected shuttle are skipped, so one list can cover chips from several shuttles.
+ * Projects that refuse to enable (e.g. because of their danger level) are skipped.
+ * Enabling a project yourself, from the REPL or the commander app, stops the cycling.
+
+From the REPL, the rotation is available as `tt.project_rotation` (`None` if only one project is configured):
+
+```
+>>> tt.project_rotation
+<ProjectRotation running, every 30s: tt_um_vga_clock, tt_um_algofoogle_solo_squash, tt_um_factory_test>
+>>> tt.project_rotation.next()   # switch now
+>>> tt.project_rotation.stop()
+>>> tt.project_rotation.start()
+```
 
 
 ### Project-specific

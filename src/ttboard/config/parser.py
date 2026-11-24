@@ -125,7 +125,9 @@ class ConfigParser:
             for option in options:
                 if option.startswith('#'):
                     continue
-                start_flag = [line for line in block if line.startswith(option) and '=' in line]
+                # match the whole option name, not just a prefix of it, so
+                # e.g. 'project' doesn't pick up a 'project_xyz = ...' line
+                start_flag = [line for line in block if '=' in line and line.split('=')[0].strip() == option]
                 start_index = block.index(start_flag[0])
                 end_flag = [line for line in block[start_index + 1:] if '=' in line]
                 if not end_flag:

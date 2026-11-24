@@ -149,7 +149,8 @@ class UserConfig:
             
             
         def_opts = ['mode', 'project', 'start_in_reset', 'log_level',
-                    'rp_clock_frequency', 'force_shuttle', 'force_demoboard']
+                    'rp_clock_frequency', 'force_shuttle', 'force_demoboard',
+                    'switch_interval']
         for opt in def_opts:
             val = None
             if conf.has_option('DEFAULT', opt):
@@ -179,8 +180,42 @@ class UserConfig:
         return RPMode.from_string(mode_str)
         
     @property
+    def default_projects(self) -> list:
+        '''
+            All projects listed in the DEFAULT 'project' option, in order.
+            The option may hold a single name or a comma-separated list, e.g.
+                project = tt_um_a, tt_um_b, tt_um_c
+            Returns an empty list if no project is set.
+        '''
+        val = self._get_default_option('project')
+        if val is None:
+            return []
+        # parser may have converted a lone value to int/float/bool
+        return [p.strip() for p in str(val).split(',') if len(p.strip())]
+
+    @property
     def default_project(self):
-        return self._get_default_option('project')
+        '''
+            The (first) project to load on boot, or None.
+        '''
+        projects = self.default_projects
+        if not len(projects):
+            return None
+        return projects[0]
+
+    @property
+    def switch_interval(self):
+        '''
+            Seconds between switching to the next project, when
+            several are listed in 'project'.  None if unset or invalid.
+        '''
+        val = self._get_default_option('switch_interval')
+        if val is None:
+            return None
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            log.error(f'switch_interval must be a number of seconds, got "{val}"')
+            return None
+        return val
     
     @property 
     def default_start_in_reset(self):
