@@ -14,7 +14,7 @@ code is on the branches below.
 |---|---|---|
 | `actions` | Default branch: this README and repository-wide workflows | Only workflows that run on a schedule or by hand, which GitHub reads from the default branch |
 | `main` | An exact mirror of upstream `main` | Never commit here: `sync-upstream.yml` force-pushes upstream over it every 6 hours |
-| `dev` | The "working main": several feature branches merged together, to build one firmware with all of them | Merge feature branches in; don't develop on it directly |
+| `dev` | The "working main": upstream `main` with several feature branches merged in, to build one firmware with all of them (currently `demo-gamepad`, `config-multi-project`, `fpga-enable-return`) | Merge feature branches in; don't develop on it directly. `sync-upstream.yml` merges upstream `main` in every 6 hours |
 | feature branches | One change each, branched from upstream `main` | What upstream pull requests are made from |
 
 ### Feature branches
@@ -46,10 +46,13 @@ Pushing a `v*` tag builds a normal release, as upstream does.
 ## Syncing with upstream
 
 [`sync-upstream.yml`](.github/workflows/sync-upstream.yml) runs every
-6 hours (or by hand from the Actions tab) and force-pushes upstream `main`
-over this fork's `main`. It pushes with a write deploy key stored in the
-secret `SYNC_DEPLOY_KEY`, because `GITHUB_TOKEN` is refused for pushes that
-write new commits changing `.github/workflows/`.
+6 hours (or by hand from the Actions tab). It force-pushes upstream `main`
+over this fork's `main`, then merges upstream `main` into `dev`; a merge
+conflict fails the run and has to be merged by hand. It pushes with a write
+deploy key stored in the secret `SYNC_DEPLOY_KEY`, because `GITHUB_TOKEN` is
+refused for pushes that write new commits changing `.github/workflows/`, and
+because, unlike `GITHUB_TOKEN` pushes, its push to `dev` starts `dev`'s
+firmware build.
 
 GitHub only runs scheduled workflows from the default branch, and disables
 them after 60 days without repository activity, so keep `actions` as the

@@ -1,9 +1,9 @@
-name: Sync main with upstream
+name: Sync with upstream
 
 # Makes this fork's `main` exactly TinyTapeout/tt-micropython-firmware's main.
 # `main` is a mirror, never a place for work, so this force-pushes: anything
 # committed to the fork's main is overwritten. Work goes on feature branches,
-# merged together on `dev` (see README.md).
+# merged together on `dev` (see README.md); upstream is merged into `dev` too.
 #
 # Scheduled workflows only run from the default branch, so `actions` (the
 # branch holding this file) must stay the default branch for the schedule.
@@ -47,3 +47,36 @@ jobs:
           echo "fork main before: $(git rev-parse HEAD)"
           echo "upstream main:    $(git rev-parse upstream/main)"
           git push --force origin refs/remotes/upstream/main:refs/heads/main
+
+  # dev = feature branches merged together; keep it on top of upstream so the
+  # combined firmware follows upstream. A merge conflict fails the run for a
+  # human to resolve; it is never resolved automatically. Pushing dev also
+  # starts dev's own firmware build (its release.yml publishes dev-dev).
+  merge-into-dev:
+    needs: sync-main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+          ssh-key: ${{ secrets.SYNC_DEPLOY_KEY }}
+
+      - name: Fetch upstream main
+        run: git fetch --no-tags "$UPSTREAM_URL" +main:refs/remotes/upstream/main
+
+      - name: Merge upstream/main into dev
+        run: |
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "dev already contains upstream/main"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git merge --no-ff --no-edit -m "Merge upstream/main into dev" upstream/main; then
+            git status
+            echo "::error::upstream/main does not merge cleanly into dev; merge it by hand"
+            exit 1
+          fi
+          git push origin HEAD:refs/heads/dev
