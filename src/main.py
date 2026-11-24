@@ -80,6 +80,13 @@ def stopClocking():
     tt.clock_project_stop()
 
 
+# Demo mode is turned on by "demo = yes" in config.ini; holding the
+# project reset button while powering up flips that for this boot
+# (see ttboard/demo.py).  The button must be sampled before the board
+# is probed.
+import ttboard.demo
+demo_button_held = ttboard.demo.boot_button_held()
+
 # Detect the demoboard version
 detection_result = '(best guess)'
 detection_color = 'red'
@@ -92,6 +99,16 @@ print(f"{colors.color(detection_message, detection_color)}")
 
 
 tt = startup()
+
+try:
+    tt.demo = ttboard.demo.autostart(tt, demo_button_held)
+    if tt.demo.running:
+        print(f"{colors.color('Demo mode running', 'cyan')}: {colors.bold('tt.demo.stop()')} to stop it")
+    elif tt.demo.errors:
+        print(f"{colors.color('Demo mode FAILED', 'red')}: see {colors.bold('tt.demo.errors')}")
+except Exception as e:
+    # never let the demo stop the board from booting to a usable REPL
+    print(f"Demo mode failed to start: {e}")
 
 
 logging.basicConfig(filename=None)

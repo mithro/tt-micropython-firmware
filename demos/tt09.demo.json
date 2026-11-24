@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "shuttle": "tt09",
+  "projects": [
+    {"address": 644, "subtile": 0, "duration_ms": 15000, "clock_hz": 25175000, "ui_in": 0, "steps": []},
+    {"address": 712, "subtile": 0, "duration_ms": 15000, "clock_hz": 25200000, "ui_in": 0, "steps": []},
+    {"address": 716, "subtile": 0, "duration_ms": 15000, "clock_hz": 50400000, "ui_in": 0, "steps": []},
+    {"address": 806, "subtile": 0, "duration_ms": 15000, "clock_hz": 25175000, "ui_in": 0, "steps": []},
+    {"address": 174, "subtile": 0, "duration_ms": 15000, "clock_hz": 25175000, "ui_in": 0, "steps": []},
+    {"address": 909, "subtile": 0, "duration_ms": 15000, "clock_hz": 25175000, "ui_in": 0, "steps": []},
+    {"address": 714, "subtile": 0, "duration_ms": 15000, "clock_hz": 25000000, "ui_in": 0, "steps": []},
+    {"address": 901, "subtile": 0, "duration_ms": 15000, "clock_hz": 25175000, "ui_in": 0, "steps": []}
+  ]
+}

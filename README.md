@@ -17,6 +17,8 @@ The RP2 and this SDK, in addition to a base micropython environment, provides (f
 
   * A system to allow for configuration using a simple config.ini: options for default project loaded on boot, clock speed (both RP2 and project), settings for bidir pin directions on a per-project level, project load input pin state, etc 
 
+  * A [demo mode](demo.md) that cycles through a playlist of projects (e.g. VGA demos at a booth) with no computer attached
+
   *  A [cocotb v2](https://www.cocotb.org/) system to allow desktop @cocotb.test() functions to be used pretty much as-is, on the RP2 with hardware in the loop, interacting with actual designs (for example, see the [factory test testbench](src/examples/tt_um_factory_test/tt_um_factory_test.py)
   
   * A REPL to muck about easily, with objects that are for the most part well behaved (dynamic attributes for each project in the shuttle, say, nice `__repr__` and `__str__` for things you'd want to look at etc)
